@@ -11,17 +11,40 @@ import (
 	"github.com/CarlosHe/fiber-healthcheck/pkg/domain"
 )
 
+// HealthCheckOptions defines the configuration for the health check manager.
+type HealthCheckOptions struct {
+	StatusCodeHealthy   int
+	StatusCodeDegraded  int
+	StatusCodeUnhealthy int
+}
+
+// DefaultOptions returns the default configuration.
+func DefaultOptions() HealthCheckOptions {
+	return HealthCheckOptions{
+		StatusCodeHealthy:   200,
+		StatusCodeDegraded:  200,
+		StatusCodeUnhealthy: 503,
+	}
+}
+
 // HealthCheckManager manages the registration and execution of health checks.
 // It is safe for concurrent use.
 type HealthCheckManager struct {
-	checks map[string]domain.HealthCheck
-	mu     sync.RWMutex
+	checks  map[string]domain.HealthCheck
+	mu      sync.RWMutex
+	options HealthCheckOptions
 }
 
 // NewHealthCheckManager creates a new instance of HealthCheckManager.
-func NewHealthCheckManager() *HealthCheckManager {
+// You can optionally pass HealthCheckOptions to configure status codes.
+func NewHealthCheckManager(opts ...HealthCheckOptions) *HealthCheckManager {
+	options := DefaultOptions()
+	if len(opts) > 0 {
+		options = opts[0]
+	}
 	return &HealthCheckManager{
-		checks: make(map[string]domain.HealthCheck),
+		checks:  make(map[string]domain.HealthCheck),
+		options: options,
 	}
 }
 
@@ -80,13 +103,10 @@ func (m *HealthCheckManager) GetResult() (int, map[string]any) {
 
 			start := time.Now()
 
-			// Recover from panic to ensure the health check doesn't crash the application
-			// and reports the failure correctly.
 			defer func() {
 				if r := recover(); r != nil {
 					duration := time.Since(start)
 					err := fmt.Errorf("panic: %v", r)
-					// Create an Unhealthy result with the panic message
 					res := domain.Unhealthy("Check panicked", err, nil)
 					res.Duration = formatDuration(duration)
 					resultChan <- checkResultContainer{Name: n, Result: res}
@@ -120,7 +140,7 @@ func (m *HealthCheckManager) GetResult() (int, map[string]any) {
 		})
 	}
 
-	statusCode := calculateStatusCode(healthyCount, degradedCount, unhealthyCount)
+	statusCode := m.calculateStatusCode(healthyCount, degradedCount, unhealthyCount)
 
 	response := map[string]any{
 		"health_check": results,
@@ -129,13 +149,14 @@ func (m *HealthCheckManager) GetResult() (int, map[string]any) {
 	return statusCode, response
 }
 
-func calculateStatusCode(healthy, degraded, unhealthy int) int {
-	if unhealthy > 0 {
-		return 503 // Service Unavailable
+func (m *HealthCheckManager) calculateStatusCode(healthy, degraded, unhealthy int) int {
+	if unhealthy == 0 && degraded == 0 {
+		return m.options.StatusCodeHealthy
 	}
-	// In some implementations, Degraded might return 200 or something else.
-	// Here we stick to 200 for Degraded as per the original Delphi logic reference.
-	return 200
+	if healthy == 0 {
+		return m.options.StatusCodeUnhealthy
+	}
+	return m.options.StatusCodeDegraded
 }
 
 func formatDuration(d time.Duration) string {

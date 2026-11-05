@@ -81,3 +81,12 @@ Check what the service needs to serve traffic (database, cache, broker, required
 ## License
 
 MIT
+
+## Built-in `serving` check
+
+Every `HealthCheckManager` is born with a `serving` check: `Healthy` until `Drain()` is called,
+`Unhealthy` afterwards. It is the only "the process is up" signal; never register your own `self`
+or `serving` (both names are reserved and `AddCheck*` panics on them). Call `Drain()` when shutdown
+starts, before the server stops accepting work, so probes and callers route away first. The Fiber
+adapter `Register` does it on `app.Shutdown()`; `DrainOnShutdown(app, managers...)` covers extra
+managers. A gRPC service calls `hc.Drain()` right before `GracefulStop()`.

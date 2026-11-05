@@ -32,3 +32,16 @@ func TestRegister(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterDrainsOnShutdown(t *testing.T) {
+	m := usecase.NewHealthCheckManager(usecase.HealthCheckOptions{CacheTTL: -1})
+	app := fiber.New()
+	Register(app, m)
+
+	if err := app.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Draining() {
+		t.Fatal("manager not drained on shutdown")
+	}
+}

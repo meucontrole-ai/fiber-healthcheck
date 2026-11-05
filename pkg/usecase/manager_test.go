@@ -10,7 +10,9 @@ import (
 	"github.com/meucontrole-ai/fiber-healthcheck/pkg/domain"
 )
 
-func noCache() HealthCheckOptions { return HealthCheckOptions{CacheTTL: -1, Timeout: 100 * time.Millisecond} }
+func noCache() HealthCheckOptions {
+	return HealthCheckOptions{CacheTTL: -1, Timeout: 100 * time.Millisecond}
+}
 
 func TestAggregation(t *testing.T) {
 	cases := []struct {
@@ -42,7 +44,11 @@ func TestAggregation(t *testing.T) {
 
 func TestTimeoutPanicNilAndInvalid(t *testing.T) {
 	m := NewHealthCheckManager(noCache())
-	m.AddCheckContext("slow", func(ctx context.Context) *domain.HealthCheckResult { <-ctx.Done(); time.Sleep(time.Second); return domain.Healthy("late", nil) })
+	m.AddCheckContext("slow", func(ctx context.Context) *domain.HealthCheckResult {
+		<-ctx.Done()
+		time.Sleep(time.Second)
+		return domain.Healthy("late", nil)
+	})
 	m.AddCheckFunc("panic", func() *domain.HealthCheckResult { panic("boom") })
 	m.AddCheckFunc("nil", func() *domain.HealthCheckResult { return nil })
 	m.AddCheckFunc("bogus", func() *domain.HealthCheckResult { return domain.NewResult("Weird", "x", nil, nil) })
@@ -54,15 +60,51 @@ func TestTimeoutPanicNilAndInvalid(t *testing.T) {
 	if code != 503 {
 		t.Fatalf("code %d", code)
 	}
-	names := []string{"bogus", "nil", "panic", "slow"}
+	names := []string{"bogus", "nil", "panic", ServingCheck, "slow"}
 	for i, entry := range r.HealthCheck {
 		res, ok := entry[names[i]]
 		if !ok {
 			t.Fatalf("order: entry %d is %v", i, entry)
 		}
-		if res.Status != domain.HealthStatusUnhealthy {
+		want := domain.HealthStatusUnhealthy
+		if names[i] == ServingCheck {
+			want = domain.HealthStatusHealthy
+		}
+		if res.Status != want {
 			t.Fatalf("%s: %s", names[i], res.Status)
 		}
+	}
+}
+
+func TestServingIsBuiltInAndDrains(t *testing.T) {
+	m := NewHealthCheckManager()
+	m.AddCheckFunc("db", func() *domain.HealthCheckResult { return domain.Healthy("ok", nil) })
+
+	code, r := m.Run(context.Background())
+	if code != 200 || r.Status != domain.HealthStatusHealthy || len(r.HealthCheck) != 2 {
+		t.Fatalf("before drain: %d %s %v", code, r.Status, r.HealthCheck)
+	}
+
+	m.Drain()
+	code, r = m.Run(context.Background())
+	if code != 503 || r.Status != domain.HealthStatusUnhealthy || !m.Draining() {
+		t.Fatalf("after drain: %d %s", code, r.Status)
+	}
+	if r.HealthCheck[1][ServingCheck].Status != domain.HealthStatusUnhealthy {
+		t.Fatalf("serving not drained: %v", r.HealthCheck)
+	}
+}
+
+func TestReservedNamesPanic(t *testing.T) {
+	for _, name := range []string{ServingCheck, "self"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%q accepted", name)
+				}
+			}()
+			NewHealthCheckManager().AddCheckFunc(name, func() *domain.HealthCheckResult { return domain.Healthy("x", nil) })
+		}()
 	}
 }
 

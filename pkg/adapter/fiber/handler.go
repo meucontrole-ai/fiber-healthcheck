@@ -37,10 +37,23 @@ func NewLivenessHandler() fiber.Handler {
 	}
 }
 
-// Register mounts /health, /health/live and /health/ready, plus any legacy alias paths
-// (e.g. "/healthz", "/healthcheck") that answer like /health. Register it before
-// authentication middleware so probes never get 401.
+// DrainOnShutdown drains every manager when app starts shutting down, so "serving" turns
+// Unhealthy and probes route away before the listener closes.
+func DrainOnShutdown(app *fiber.App, ms ...*usecase.HealthCheckManager) {
+	app.Hooks().OnPreShutdown(func() error {
+		for _, m := range ms {
+			m.Drain()
+		}
+		return nil
+	})
+}
+
+// Register mounts /health, /health/live and /health/ready plus legacy aliases answering like /health,
+// before auth middleware; on a *fiber.App it also drains m on shutdown (see DrainOnShutdown).
 func Register(r fiber.Router, m *usecase.HealthCheckManager, aliases ...string) {
+	if app, ok := r.(*fiber.App); ok {
+		DrainOnShutdown(app, m)
+	}
 	h := NewHandler(m)
 	r.Get(PathHealth, h)
 	r.Get(PathReady, h)

@@ -13,7 +13,7 @@ import (
 func TestRegister(t *testing.T) {
 	app := fiber.New()
 	m := usecase.NewHealthCheckManager(usecase.HealthCheckOptions{CacheTTL: -1})
-	m.AddCheckFunc("db", func() *domain.HealthCheckResult { return domain.Unhealthy("down", nil, nil) })
+	m.AddCheckFunc("postgres", func() *domain.HealthCheckResult { return domain.Unhealthy("down", nil, nil) })
 	Register(app, m, "/healthz")
 	for path, want := range map[string]int{"/health": 503, "/health/ready": 503, "/healthz": 503, "/health/live": 200} {
 		res, err := app.Test(httptest.NewRequest("GET", path, nil))
